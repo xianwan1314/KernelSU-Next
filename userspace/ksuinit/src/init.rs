@@ -51,13 +51,11 @@ fn mount_filesystem(name: &str, mountpoint: &str) -> Result<()> {
 fn prepare_mount() -> AutoUmount {
     let mut mountpoints = vec![];
 
-    // mount procfs
     match mount_filesystem("proc", "/proc") {
         Ok(_) => mountpoints.push("/proc".to_string()),
         Err(e) => log::error!("Cannot mount procfs: {:?}", e),
     }
 
-    // mount sysfs
     match mount_filesystem("sysfs", "/sys") {
         Ok(_) => mountpoints.push("/sys".to_string()),
         Err(e) => log::error!("Cannot mount sysfs: {:?}", e),
@@ -71,7 +69,6 @@ fn setup_kmsg() {
     let device = match access(KMSG, Access::EXISTS) {
         Ok(_) => KMSG,
         Err(_) => {
-            // try to create it
             mknodat(
                 CWD,
                 "/kmsg",
@@ -88,7 +85,6 @@ fn setup_kmsg() {
 }
 
 fn unlimit_kmsg() {
-    // Disable kmsg rate limiting
     if let Ok(mut rate) = std::fs::File::options()
         .write(true)
         .open("/proc/sys/kernel/printk_devkmsg")
@@ -98,27 +94,23 @@ fn unlimit_kmsg() {
 }
 
 pub fn init() -> Result<()> {
-    // Setup kernel log first
     setup_kmsg();
 
     log::info!("Hello, KernelSU!");
 
-    // mount /proc and /sys to access kernel interface
     let _dontdrop = prepare_mount();
 
-    // This relies on the fact that we have /proc mounted
     unlimit_kmsg();
 
     if ksuinit::has_kernelsu() {
         log::info!("KernelSU may be already loaded in kernel, skip!");
     } else {
-        log::info!("Loading kernelsu.ko..");
-        if let Err(e) = load_module_from_path("/kernelsu.ko") {
+        log::info!("Loading primary boot module /kernelsu.ko");
+        if let Err(e) = load_module_from_path("/kernelsu.ko", Some("/kernelsu_vivo.ko")) {
             log::error!("Cannot load kernelsu.ko: {:?}", e);
         }
     }
 
-    // And now we should prepare the real init to transfer control to it
     unlink("/init")?;
 
     let real_init = match access("/init.real", Access::EXISTS) {
@@ -132,11 +124,29 @@ pub fn init() -> Result<()> {
     Ok(())
 }
 
-fn load_module_from_path(path: &str) -> Result<()> {
+fn load_module_from_path(path: &str, fallback_path: Option<&str>) -> Result<()> {
     anyhow::ensure!(rustix::process::getpid().is_init(), "Invalid process");
     let buffer = std::fs::read(path).with_context(|| format!("Cannot read file {}", path))?;
+    let fallback = fallback_path.and_then(|fallback_path| match std::fs::read(fallback_path) {
+        Ok(buffer) => {
+            log::info!("Prepared fallback module from {fallback_path}");
+            Some(buffer)
+        }
+        Err(error) => {
+            log::info!("No fallback module at {fallback_path}: {error}");
+            None
+        }
+    });
     let params = std::fs::read("/ksu_config").unwrap_or_default();
     let params = unsafe { CString::from_vec_unchecked(params) };
     log::info!("load kernelsu with params {params:?}");
-    ksuinit::load_module(&buffer, &params)
+    ksuinit::load_module_with_named_vermagic_fallback(
+        &buffer,
+        path,
+        fallback
+            .as_deref()
+            .zip(fallback_path)
+            .map(|(buffer, fallback_path)| (buffer, fallback_path)),
+        &params,
+    )
 }

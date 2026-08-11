@@ -5,10 +5,13 @@ use std::path::PathBuf;
 use android_logger::Config;
 use log::{LevelFilter, info};
 
-use crate::boot_patch::{BootPatchArgs, BootRestoreArgs};
+use crate::boot_patch::{BootPatchArgs, BootRestoreArgs, VendorBootRmvrArgs};
 use crate::lkm_image::BootPatchV2Args;
 use crate::module::regenerate_preinit_rc;
-use crate::{apk_sign, assets, debug, defs, ksu_uapi, init_event, ksucalls, module, module_config, sulog, susfsd, utils};
+use crate::{
+    apk_sign, assets, debug, defs, init_event, ksu_uapi, ksucalls, module, module_config, sulog,
+    susfsd, utils,
+};
 
 /// KernelSU Next userspace cli
 #[derive(Parser, Debug)]
@@ -99,6 +102,9 @@ enum Commands {
     /// Patch boot or init_boot images to apply KernelSU Next
     BootPatch(BootPatchArgs),
 
+    /// Remove conflicting prebuilt modules from vendor_boot
+    BootPatchRmvr(VendorBootRmvrArgs),
+
     /// Restore boot or init_boot images patched by KernelSU
     BootRestore(BootRestoreArgs),
 
@@ -155,6 +161,9 @@ enum BootInfo {
 
     /// show supported kmi versions
     SupportedKmis,
+
+    /// classify an image as boot / init_boot / vendor_boot
+    ClassifyImage { image: PathBuf },
 
     /// check if device is A/B capable
     IsAbDevice,
@@ -634,7 +643,11 @@ pub fn run() -> Result<()> {
             Sepolicy::Apply { file } => crate::sepolicy::apply_file(file),
             Sepolicy::Check { sepolicy } => crate::sepolicy::check_rule(&sepolicy),
         },
-        Commands::LateLoad { package_name, kmi, allow_shell } => crate::late_load::run(&package_name, kmi, allow_shell),
+        Commands::LateLoad {
+            package_name,
+            kmi,
+            allow_shell,
+        } => crate::late_load::run(&package_name, kmi, allow_shell),
         Commands::Services => {
             if ksucalls::get_version() <= 0 {
                 info!("KernelSU Next not available, exiting services");
@@ -715,6 +728,7 @@ pub fn run() -> Result<()> {
         },
 
         Commands::BootPatch(boot_patch) => crate::boot_patch::patch(boot_patch),
+        Commands::BootPatchRmvr(rmvr) => crate::boot_patch::patch_rmvr(rmvr),
 
         Commands::BootInfo { command } => match command {
             BootInfo::CurrentKmi => {
@@ -728,6 +742,11 @@ pub fn run() -> Result<()> {
                 for kmi in &kmi {
                     println!("{kmi}");
                 }
+                return Ok(());
+            }
+            BootInfo::ClassifyImage { image } => {
+                let kind = crate::boot_patch::classify_image(&image)?;
+                println!("{kind}");
                 return Ok(());
             }
             BootInfo::IsAbDevice => {

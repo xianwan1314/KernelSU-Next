@@ -3,6 +3,7 @@ package com.rifsxd.ksunext.ui.screen
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
@@ -56,7 +57,7 @@ import com.rifsxd.ksunext.ui.component.SwitchItem
 import com.rifsxd.ksunext.ui.component.rememberConfirmDialog
 import com.rifsxd.ksunext.ui.component.rememberCustomDialog
 import com.rifsxd.ksunext.ui.util.*
-import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * @author weishu
@@ -78,8 +79,13 @@ fun InstallScreen(navigator: DestinationsNavigator) {
     var advancedOptionsShown by rememberSaveable { mutableStateOf(false) }
     var allowShell by rememberSaveable { mutableStateOf(false) }
     var enableAdb by rememberSaveable { mutableStateOf(false) }
+    var selectedBootImageKind by rememberSaveable { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val showMessage = { message: String ->
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
 
     val onInstall = {
         installMethod?.let { method ->
@@ -96,6 +102,7 @@ fun InstallScreen(navigator: DestinationsNavigator) {
                 boot = if (method is InstallMethod.SelectFile) method.uri else null,
                 lkm = lkmSelection,
                 ota = method is InstallMethod.DirectInstallToInactiveSlot,
+                bootImageKind = selectedBootImageKind,
                 allowShell = allowShell,
                 enableAdb = enableAdb
             )
@@ -105,27 +112,53 @@ fun InstallScreen(navigator: DestinationsNavigator) {
 
     val currentKmi by produceState(initialValue = "") { value = getCurrentKmi() }
 
-    val selectKmiDialog = rememberSelectKmiDialog { kmi ->
+    val selectKmiDialog = rememberSelectKmiDialog(
+        preferredKmi = currentKmi.takeIf { it.isNotBlank() },
+        currentKmi = currentKmi
+    ) { kmi ->
         kmi?.let {
             lkmSelection = LkmSelection.KmiString(it)
             onInstall()
         }
     }
 
-    val onClickNext = {
-        when (installMethod) {
-            is InstallMethod.AnyKernel -> {
-                onInstall()
+    val continueInstall = {
+        when {
+            installMethod is InstallMethod.AnyKernel -> onInstall()
+            lkmSelection == LkmSelection.KmiNone &&
+                (currentKmi.isBlank() || installMethod is InstallMethod.SelectFile) &&
+                !isVendorBootTarget(selectedBootImageKind) -> {
+                selectKmiDialog.show()
             }
 
-            else -> {
-                if (lkmSelection == LkmSelection.KmiNone && currentKmi.isBlank()) {
-                    // no lkm file selected and cannot get current kmi
-                    selectKmiDialog.show()
-                } else {
-                    onInstall()
+            installMethod is InstallMethod.SelectFile &&
+                !isSupportedBootImageKind(selectedBootImageKind) -> {
+            }
+
+            else -> onInstall()
+        }
+    }
+
+    val onClickNext: () -> Unit = click@{
+        when (installMethod) {
+            is InstallMethod.AnyKernel -> onInstall()
+            is InstallMethod.SelectFile -> {
+                val selected = installMethod as InstallMethod.SelectFile
+                val uri = selected.uri ?: return@click
+                scope.launch {
+                    val kind = selectedBootImageKind
+                        ?.takeIf { it != BOOT_IMAGE_KIND_UNKNOWN }
+                        ?: classifyBootImage(uri)
+                    selectedBootImageKind = kind
+                    if (!isSupportedBootImageKind(kind)) {
+                        showMessage(context.getString(R.string.install_only_support_boot_family_image))
+                    } else {
+                        continueInstall()
+                    }
                 }
             }
+
+            else -> continueInstall()
         }
     }
 
@@ -185,6 +218,7 @@ fun InstallScreen(navigator: DestinationsNavigator) {
         ) {
             SelectInstallMethod(installMethod) { method ->
                 installMethod = method
+                selectedBootImageKind = null
             }
 
             val rotationState by animateFloatAsState(
@@ -411,18 +445,29 @@ private fun SelectInstallMethod(selectedMethod: InstallMethod?, onSelected: (Ins
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun rememberSelectKmiDialog(onSelected: (String?) -> Unit): DialogHandle {
+fun rememberSelectKmiDialog(
+    preferredKmi: String? = null,
+    currentKmi: String = "",
+    onSelected: (String?) -> Unit
+): DialogHandle {
     return rememberCustomDialog { dismiss ->
         val supportedKmi by produceState(initialValue = emptyList()) {
             value = getSupportedKmis()
         }
-        val options = supportedKmi.map { value ->
+        val orderedKmis = remember(supportedKmi) {
+            orderSupportedKmis(supportedKmi)
+        }
+        val preferred = remember(preferredKmi, currentKmi, orderedKmis) {
+            resolvePreferredKmi(preferredKmi, currentKmi, orderedKmis)
+        }
+        val options = orderedKmis.map { value ->
             ListOption(
-                titleText = value
+                titleText = value,
+                selected = value == preferred
             )
         }
 
-        var selection by remember { mutableStateOf<String?>(null) }
+        var selection by remember(preferred) { mutableStateOf(preferred) }
         ListDialog(state = rememberUseCaseState(visible = true, onFinishedRequest = {
             onSelected(selection)
         }, onCloseRequest = {

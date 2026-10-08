@@ -2,13 +2,18 @@ name: Build LKM for KernelSU
 on:
   workflow_call:
     inputs:
-      expected_size:
-        description: 'Expected Manager signature size'
+      manager_package:
+        description: 'manager package name'
         required: false
         default: ''
         type: string
-      expected_hash:
-        description: 'Expected Manager signature hash'
+      expected_manager_size:
+        description: 'expected signature size'
+        required: false
+        default: ''
+        type: string
+      expected_manager_hash:
+        description: 'expected signature hash'
         required: false
         default: ''
         type: string
@@ -29,5 +34,6 @@ jobs:
     uses: ./.github/workflows/ddk-lkm.yml
     with:
       kmi: ${{ matrix.kmi }}
-      expected_size: ${{ inputs.expected_size || '' }}
-      expected_hash: ${{ inputs.expected_hash || '' }}
+      manager_package: ${{ inputs.manager_package || '' }}
+      expected_manager_size: ${{ inputs.expected_manager_size || '' }}
+      expected_manager_hash: ${{ inputs.expected_manager_hash || '' }}

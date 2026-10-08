@@ -12,13 +12,18 @@ on:
         required: false
         default: '20260828'
         type: string
-      expected_size:
-        description: 'Expected Manager signature size'
+      manager_package:
+        description: 'manager package name'
         required: false
         default: ''
         type: string
-      expected_hash:
-        description: 'Expected Manager signature hash'
+      expected_manager_size:
+        description: 'expected signature size'
+        required: false
+        default: ''
+        type: string
+      expected_manager_hash:
+        description: 'expected signature hash'
         required: false
         default: ''
         type: string
@@ -90,8 +95,9 @@ jobs:
 
     - name: Build kernelsu.ko
       env:
-        EXPECTED_SIZE: ${{ inputs.expected_size }}
-        EXPECTED_HASH: ${{ inputs.expected_hash }}
+        MANAGER_PACKAGE: ${{ inputs.manager_package }}
+        EXPECTED_MANAGER_SIZE: ${{ inputs.expected_manager_size }}
+        EXPECTED_MANAGER_HASH: ${{ inputs.expected_manager_hash }}
       run: |
         git config --global --add safe.directory /__w/KernelSU-Next/KernelSU-Next
 
@@ -100,16 +106,22 @@ jobs:
         echo "=== Building kernelsu.ko for KMI: ${{ inputs.kmi }} ==="
 
         EXTRA_ARGS=""
-        if [ -n "$EXPECTED_SIZE" ] && [ -z "$EXPECTED_HASH" ]; then
-          echo "ERROR: expected_hash must be provided when expected_size is set."
+        if [ -n "$EXPECTED_MANAGER_SIZE" ] && [ -z "$EXPECTED_MANAGER_HASH" ]; then
+          echo "ERROR: expected_manager_hash must be provided when expected_manager_size is set."
           exit 1
         fi
-        if [ -z "$EXPECTED_SIZE" ] && [ -n "$EXPECTED_HASH" ]; then
-          echo "ERROR: expected_size must be provided when expected_hash is set."
+        if [ -z "$EXPECTED_MANAGER_SIZE" ] && [ -n "$EXPECTED_MANAGER_HASH" ]; then
+          echo "ERROR: expected_manager_size must be provided when expected_manager_hash is set."
           exit 1
         fi
-        if [ -n "$EXPECTED_SIZE" ]; then
-          EXTRA_ARGS="KSU_NEXT_MANAGER_SIZE=$EXPECTED_SIZE KSU_NEXT_MANAGER_HASH=$EXPECTED_HASH"
+        if [ -n "$MANAGER_PACKAGE" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS KSU_MANAGER_PACKAGE=$MANAGER_PACKAGE"
+        fi
+        if [ -n "$EXPECTED_MANAGER_SIZE" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS KSU_NEXT_MANAGER_SIZE=$EXPECTED_MANAGER_SIZE"
+        fi
+        if [ -n "$EXPECTED_MANAGER_HASH" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS KSU_NEXT_MANAGER_HASH=$EXPECTED_MANAGER_HASH"
         fi
 
         CONFIG_KSU=m CC=clang make $EXTRA_ARGS
@@ -143,8 +155,9 @@ jobs:
     - name: Build kernelsu.ko for x64
       if: ${{ !inputs.vivo }}
       env:
-        EXPECTED_SIZE: ${{ inputs.expected_size }}
-        EXPECTED_HASH: ${{ inputs.expected_hash }}
+        MANAGER_PACKAGE: ${{ inputs.manager_package }}
+        EXPECTED_MANAGER_SIZE: ${{ inputs.expected_manager_size }}
+        EXPECTED_MANAGER_HASH: ${{ inputs.expected_manager_hash }}
       run: |
         cd kernel
         make clean
@@ -181,16 +194,22 @@ jobs:
         echo "=== Building x64 kernelsu.ko for KMI: ${{ inputs.kmi }} ==="
 
         EXTRA_ARGS=""
-        if [ -n "$EXPECTED_SIZE" ] && [ -z "$EXPECTED_HASH" ]; then
-          echo "ERROR: expected_hash must be provided when expected_size is set."
+        if [ -n "$EXPECTED_MANAGER_SIZE" ] && [ -z "$EXPECTED_MANAGER_HASH" ]; then
+          echo "ERROR: expected_manager_hash must be provided when expected_manager_size is set."
           exit 1
         fi
-        if [ -z "$EXPECTED_SIZE" ] && [ -n "$EXPECTED_HASH" ]; then
-          echo "ERROR: expected_size must be provided when expected_hash is set."
+        if [ -z "$EXPECTED_MANAGER_SIZE" ] && [ -n "$EXPECTED_MANAGER_HASH" ]; then
+          echo "ERROR: expected_manager_size must be provided when expected_manager_hash is set."
           exit 1
         fi
-        if [ -n "$EXPECTED_SIZE" ]; then
-          EXTRA_ARGS="KSU_NEXT_MANAGER_SIZE=$EXPECTED_SIZE KSU_NEXT_MANAGER_HASH=$EXPECTED_HASH"
+        if [ -n "$MANAGER_PACKAGE" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS KSU_MANAGER_PACKAGE=$MANAGER_PACKAGE"
+        fi
+        if [ -n "$EXPECTED_MANAGER_SIZE" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS KSU_NEXT_MANAGER_SIZE=$EXPECTED_MANAGER_SIZE"
+        fi
+        if [ -n "$EXPECTED_MANAGER_HASH" ]; then
+          EXTRA_ARGS="$EXTRA_ARGS KSU_NEXT_MANAGER_HASH=$EXPECTED_MANAGER_HASH"
         fi
 
         MDIR=$(realpath .)

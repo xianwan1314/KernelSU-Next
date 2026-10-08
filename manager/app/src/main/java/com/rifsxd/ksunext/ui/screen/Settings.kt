@@ -4,10 +4,16 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.system.OsConstants
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import com.rifsxd.ksunext.ui.LocalNavBarEnabled
 import com.rifsxd.ksunext.ui.LocalScrollState
 import com.rifsxd.ksunext.ui.rememberScrollConnection
 import androidx.compose.ui.res.stringResource
@@ -80,8 +87,10 @@ fun SettingScreen(navigator: DestinationsNavigator) {
     val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     val scrollState = LocalScrollState.current
-    val isNavBarHidden = scrollState?.isScrollingDown?.value ?: false
-    val navBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + if (isNavBarHidden) 0.dp else 112.dp
+    val navBarEnabled = LocalNavBarEnabled.current
+    val isNavBarHidden = (scrollState?.isScrollingDown?.value ?: false) || (navBarEnabled?.value == false)
+    val navBarPadding =
+        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + if (isNavBarHidden) 0.dp else 112.dp
 
     val bottomBarScrollState = LocalScrollState.current
     val bottomBarScrollConnection = if (bottomBarScrollState != null) {
@@ -98,6 +107,12 @@ fun SettingScreen(navigator: DestinationsNavigator) {
     }
     val loadingDialog = rememberLoadingDialog()
 
+    var isUnrooted by remember { mutableStateOf(!rootAvailable()) }
+
+    LaunchedEffect(Unit) {
+        isUnrooted = !rootAvailable()
+    }
+
     val exportBugreportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/gzip")
     ) { uri: Uri? ->
@@ -105,7 +120,8 @@ fun SettingScreen(navigator: DestinationsNavigator) {
         scope.launch(Dispatchers.IO) {
             loadingDialog.show()
             context.contentResolver.openOutputStream(uri)?.use { output ->
-                getBugreportFile(context).inputStream().use {
+                val bugReport = if (isUnrooted) getBugreportFileUnrooted(context) else getBugreportFile(context)
+                    bugReport.inputStream().use {
                     it.copyTo(output)
                 }
             }
@@ -183,7 +199,8 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                 exportBugreportLauncher = exportBugreportLauncher,
                 loadingDialog = loadingDialog,
                 scope = scope,
-                context = context
+                context = context,
+                isUnrooted = isUnrooted
             )
 
             Spacer(Modifier)
@@ -352,14 +369,19 @@ private fun KernelFeaturesCard(
                         0 -> {}
                         -OsConstants.EAGAIN -> {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, R.string.settings_selinux_hide_reboot_required,
-                                    Toast.LENGTH_LONG).show()
+                                Toast.makeText(
+                                    context, R.string.settings_selinux_hide_reboot_required,
+                                    Toast.LENGTH_LONG
+                                ).show()
                             }
                         }
+
                         else -> {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, context.getString(R.string.settings_selinux_hide_failed, status),
-                                    Toast.LENGTH_LONG).show()
+                                Toast.makeText(
+                                    context, context.getString(R.string.settings_selinux_hide_failed, status),
+                                    Toast.LENGTH_LONG
+                                ).show()
                             }
                         }
                     }
@@ -491,7 +513,8 @@ private fun AppSettingsCard(
     exportBugreportLauncher: androidx.activity.result.ActivityResultLauncher<String>,
     loadingDialog: LoadingDialogHandle,
     scope: kotlinx.coroutines.CoroutineScope,
-    context: android.content.Context
+    context: android.content.Context,
+    isUnrooted: Boolean
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -513,6 +536,93 @@ private fun AppSettingsCard(
                 prefs.edit { putBoolean("check_update", it) }
                 checkUpdate = it
             }
+
+            var requireBiometric by rememberSaveable {
+                mutableStateOf(prefs.getBoolean("enable_biometric_lock", false))
+            }
+            var appLockTimeout by rememberSaveable {
+                mutableStateOf(prefs.getLong("app_lock_timeout", 60000L))
+            }
+            var showTimeoutMenu by remember { mutableStateOf(false) }
+
+            val timeoutOptions = remember {
+                listOf(
+                    0L to R.string.settings_app_lock_timeout_immediate,
+                    60000L to R.string.settings_app_lock_timeout_1m,
+                    300000L to R.string.settings_app_lock_timeout_5m
+                )
+            }
+
+            val timeoutLabelRes = timeoutOptions.find { it.first == appLockTimeout }?.second
+                ?: R.string.settings_app_lock_timeout_1m
+            val timeoutLabel = stringResource(timeoutLabelRes)
+
+            ListItem(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .toggleable(
+                        value = requireBiometric,
+                        role = Role.Switch,
+                        onValueChange = { newValue ->
+                            if (newValue && !(context.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager).isDeviceSecure) {
+                                Toast.makeText(context, context.getString(R.string.settings_app_lock_no_credential), Toast.LENGTH_SHORT).show()
+                                return@toggleable
+                            }
+                            requireBiometric = newValue
+                            prefs.edit { putBoolean("enable_biometric_lock", newValue) }
+                        }
+                    ),
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    leadingContent = { Icon(Icons.Filled.Lock, null) },
+                    headlineContent = { Text(stringResource(R.string.settings_app_lock)) },
+                    supportingContent = {
+                        Column(modifier = Modifier.animateContentSize()) {
+                            Text(stringResource(R.string.settings_app_lock_summary))
+                            if (requireBiometric) {
+                                Box {
+                                    Text(
+                                        text = "${stringResource(R.string.settings_app_lock_timeout)}: $timeoutLabel",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .padding(top = 4.dp)
+                                            .clickable { showTimeoutMenu = true }
+                                            .padding(vertical = 4.dp)
+                                    )
+                                    DropdownMenu(
+                                        expanded = showTimeoutMenu,
+                                        onDismissRequest = { showTimeoutMenu = false }
+                                    ) {
+                                        timeoutOptions.forEach { (time, stringRes) ->
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(stringRes)) },
+                                                trailingIcon = {
+                                                    Icon(
+                                                        imageVector = if (appLockTimeout == time) Icons.Filled.RadioButtonChecked else Icons.Filled.RadioButtonUnchecked,
+                                                        contentDescription = null,
+                                                        tint = if (appLockTimeout == time) androidx.compose.material3.MaterialTheme.colorScheme.primary else androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                },
+                                                onClick = {
+                                                    appLockTimeout = time
+                                                    prefs.edit { putLong("app_lock_timeout", time) }
+                                                    showTimeoutMenu = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = requireBiometric,
+                            onCheckedChange = null // Handled by toggleable
+                        )
+                    }
+                )
+
 
             ListItem(
                 modifier = Modifier
@@ -540,11 +650,13 @@ private fun AppSettingsCard(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 leadingContent = { Icon(Icons.Filled.BugReport, null) },
                 headlineContent = {
-                    Text(
-                        text = stringResource(R.string.export_log),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                        Text(
+                            text = stringResource(
+                                if (isUnrooted) R.string.export_log_unrooted else R.string.export_log
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
                 }
             )
 
@@ -561,7 +673,11 @@ private fun AppSettingsCard(
                         scope.launch {
                             val bugreport = loadingDialog.withLoading {
                                 withContext(Dispatchers.IO) {
-                                    getBugreportFile(context)
+                                    if (isUnrooted) {
+                                        getBugreportFileUnrooted(context)
+                                    } else {
+                                        getBugreportFile(context)
+                                    }
                                 }
                             }
                             val uri: Uri = FileProvider.getUriForFile(
@@ -693,9 +809,11 @@ fun UninstallItem(
                         UninstallType.PERMANENT -> navigator.navigate(
                             FlashScreenDestination(FlashIt.FlashUninstall)
                         )
+
                         UninstallType.RESTORE_STOCK_IMAGE -> navigator.navigate(
                             FlashScreenDestination(FlashIt.FlashRestore)
                         )
+
                         UninstallType.NONE -> Unit
                     }
                 }

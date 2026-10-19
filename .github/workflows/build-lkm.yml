@@ -53,6 +53,3 @@ jobs:
     uses: ./.github/workflows/ddk-lkm-susfs.yml
     with:
       kmi: ${{ matrix.kmi }}
-      manager_package: ${{ inputs.manager_package || '' }}
-      expected_manager_size: ${{ inputs.expected_manager_size || '' }}
-      expected_manager_hash: ${{ inputs.expected_manager_hash || '' }}

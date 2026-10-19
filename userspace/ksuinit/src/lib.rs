@@ -87,7 +87,14 @@ pub fn for_each_kernel_symbols<F: FnMut(&(String, u64)) -> Result<bool>>(mut f: 
 }
 
 pub fn load_module(data: &[u8], params: &CStr) -> Result<()> {
-    load_module_inner(data, "module", None, params)
+    load_module_with_resolver(data, params, resolve_kallsyms)
+}
+
+pub fn load_module_with_resolver<F>(data: &[u8], params: &CStr, resolve: F) -> Result<()>
+where
+    F: Fn(&[&str]) -> Result<Vec<Option<u64>>>,
+{
+    load_module_inner(data, "module", None, params, &resolve)
 }
 
 pub fn load_module_with_vermagic_fallback(
@@ -100,6 +107,7 @@ pub fn load_module_with_vermagic_fallback(
         "primary module",
         fallback_data.map(|data| (data, "fallback module")),
         params,
+        &resolve_kallsyms,
     )
 }
 
@@ -109,15 +117,19 @@ pub fn load_module_with_named_vermagic_fallback(
     fallback: Option<(&[u8], &str)>,
     params: &CStr,
 ) -> Result<()> {
-    load_module_inner(data, primary_name, fallback, params)
+    load_module_inner(data, primary_name, fallback, params, &resolve_kallsyms)
 }
 
-fn load_module_inner(
+fn load_module_inner<F>(
     data: &[u8],
     module_name: &str,
     fallback: Option<(&[u8], &str)>,
     params: &CStr,
-) -> Result<()> {
+    resolve: &F,
+) -> Result<()>
+where
+    F: Fn(&[&str]) -> Result<Vec<Option<u64>>>,
+{
     let mut buffer = data.to_vec();
     let elf = Elf::parse(&buffer)?;
     let ctx = *elf.syms.ctx();
@@ -143,7 +155,14 @@ fn load_module_inner(
     if !unresolved_symbols.is_empty() {
         let names: Vec<String> = unresolved_symbols.keys().cloned().collect();
         let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let addresses = resolve_kallsyms(&name_refs)?;
+        let addresses = resolve(&name_refs)?;
+        if addresses.len() != names.len() {
+            bail!(
+                "Resolver returned {} addresses for {} symbols",
+                addresses.len(),
+                names.len()
+            );
+        }
 
         for (name, address) in names.iter().zip(addresses) {
             if let Some(addr) = address {
@@ -197,7 +216,7 @@ fn load_module_inner(
                     "Version-magic mismatch for {}; switching to fallback {}",
                     module_name, fallback_name
                 );
-                load_module_inner(fallback_data, fallback_name, None, params)
+                load_module_inner(fallback_data, fallback_name, None, params, resolve)
                     .with_context(|| format!("Fallback module load failed for {fallback_name}"))?;
                 log::info!(
                     "Fallback module {} loaded successfully after {} vermagic mismatch",

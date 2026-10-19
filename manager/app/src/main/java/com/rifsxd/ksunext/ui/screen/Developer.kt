@@ -9,6 +9,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DeveloperMode
 import androidx.compose.material.icons.filled.Web
 import androidx.compose.material.icons.filled.Coronavirus
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -125,6 +126,21 @@ fun DeveloperScreen(navigator: DestinationsNavigator) {
                 ) {
                     prefs.edit { putBoolean("enable_web_debugging", it) }
                     enableWebDebugging = it
+                }
+            }
+
+            var softRebootAfterModuleFlash by rememberSaveable {
+                mutableStateOf(prefs.getBoolean("soft_reboot_after_module_flash", false))
+            }
+            if (ksuVersion != null) {
+                SwitchItem(
+                    icon = Icons.Filled.Refresh,
+                    title = stringResource(R.string.soft_reboot_after_module_flash),
+                    summary = stringResource(R.string.soft_reboot_after_module_flash_summary),
+                    checked = softRebootAfterModuleFlash
+                ) { checked ->
+                    prefs.edit { putBoolean("soft_reboot_after_module_flash", checked) }
+                    softRebootAfterModuleFlash = checked
                 }
             }
 

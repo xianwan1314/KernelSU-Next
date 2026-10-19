@@ -1013,6 +1013,7 @@ private data class HomeInfoSnapshot(
     val unameRelease: String = "",
     val unameMachine: String = "",
     val seccompStatus: String = "Unavailable",
+    val selinuxStatusRes: Int = R.string.selinux_status_unknown,
 )
 
 private fun buildHomeInfoSnapshot(
@@ -1058,6 +1059,7 @@ private fun buildHomeInfoSnapshot(
         unameRelease = uname?.release.orEmpty(),
         unameMachine = uname?.machine.orEmpty(),
         seccompStatus = seccompStatus,
+        selinuxStatusRes = getSELinuxStatus(),
     )
 }
 
@@ -1209,7 +1211,7 @@ private fun InfoCard(autoExpand: Boolean = false) {
                         Spacer(Modifier.height(16.dp))
                         InfoCardItem(
                             label = stringResource(R.string.home_selinux_status),
-                            content = getSELinuxStatus(),
+                            content = stringResource(homeInfo.selinuxStatusRes),
                             icon = Icons.Filled.Security,
                         )
 
@@ -1238,7 +1240,7 @@ private fun InfoCard(autoExpand: Boolean = false) {
                     ) {
                         Icon(
                             imageVector = Icons.Filled.KeyboardArrowDown,
-                            contentDescription = if (expanded) "Show less" else "Show more",
+                            contentDescription = if (expanded) null else null,
                             modifier = Modifier.graphicsLayer {
                                 rotationZ = rotationAngle
                             }
@@ -1267,33 +1269,33 @@ fun ContributorsCard() {
             login = "rifsxd",
             name = "Rifat Azad",
             githubUrl = "https://github.com/rifsxd",
-            role = "Lead Developer",
+            role = stringResource(R.string.contributor_lead_developer),
             donationUrl = "https://github.com/KernelSU-Next/KernelSU-Next/tree/dev?tab=readme-ov-file#-donations"
         ),
         Contributor(
             login = "tiann",
             name = "Weishu",
             githubUrl = "https://github.com/tiann",
-            role = "KernelSU Author",
+            role = stringResource(R.string.contributor_kernel_author),
             donationUrl = "https://www.patreon.com/weishu"
         ),
         Contributor(
             login = "fatalcoder524",
             githubUrl = "https://github.com/fatalcoder524",
-            role = "Frontend Maintainer",
+            role = stringResource(R.string.contributor_frontend_maintainer),
             donationUrl = "https://github.com/sponsors/fatalcoder524"
         ),
         Contributor(
             login = "pershoot",
             githubUrl = "https://github.com/pershoot",
-            role = "Backend Maintainer",
+            role = stringResource(R.string.contributor_backend_maintainer),
             donationUrl = "https://github.com/sponsors/pershoot"
         ),
         Contributor(
             login = "maxsteeel",
             name = "Max",
             githubUrl = "https://github.com/maxsteeel",
-            role = "Legacy Maintainer",
+            role = stringResource(R.string.contributor_legacy_maintainer),
             donationUrl = "https://github.com/sponsors/maxsteeel"
         )
     )

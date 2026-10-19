@@ -141,20 +141,21 @@ fn load_module_inner(
     }
 
     if !unresolved_symbols.is_empty() {
-        for_each_kernel_symbols(|(symbol, addr)| {
-            if let Some((mut sym, offset)) = unresolved_symbols.remove(symbol) {
-                sym.st_shndx = section_header::SHN_ABS as usize;
-                sym.st_value = *addr;
-                buffer.pwrite_with(sym, offset, ctx)?;
+        let names: Vec<String> = unresolved_symbols.keys().cloned().collect();
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let addresses = resolve_kallsyms(&name_refs)?;
+
+        for (name, address) in names.iter().zip(addresses) {
+            if let Some(addr) = address {
+                if let Some((mut sym, offset)) = unresolved_symbols.remove(name) {
+                    sym.st_shndx = section_header::SHN_ABS as usize;
+                    sym.st_value = addr;
+                    buffer.pwrite_with(sym, offset, ctx)?;
+                }
+            } else {
+                log::warn!("Cannot find symbol: {}", name);
             }
-
-            Ok(!unresolved_symbols.is_empty())
-        })
-        .context("Cannot parse kallsyms")?;
-    }
-
-    for name in unresolved_symbols.keys() {
-        log::warn!("Cannot find symbol: {}", name);
+        }
     }
 
     let mut kmsg = match open_kmsg_at_end() {
@@ -478,6 +479,30 @@ fn replace_module_vermagic(buffer: &mut Vec<u8>, required_vermagic: &str) -> Res
         required_vermagic
     );
     Ok(())
+}
+
+/// Resolve `names` against /proc/kallsyms, one address per name. The first
+/// match in kallsyms order wins.
+pub fn resolve_kallsyms(names: &[&str]) -> Result<Vec<Option<u64>>> {
+    let mut addrs = vec![None; names.len()];
+    let mut pending: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (*name, i))
+        .collect();
+
+    if !pending.is_empty() {
+        for_each_kernel_symbols(|(symbol, addr)| {
+            if let Some(i) = pending.remove(symbol.as_str()) {
+                addrs[i] = Some(*addr);
+            }
+
+            Ok(!pending.is_empty())
+        })
+        .context("Cannot parse kallsyms")?;
+    }
+
+    Ok(addrs)
 }
 
 fn has_kernelsu_legacy() -> bool {

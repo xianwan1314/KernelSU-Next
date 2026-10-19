@@ -18,7 +18,8 @@ const RISK_CACHE_PATH: &str = concatcp!(defs::CACHE_DIR, "risk.json");
 const MAX_SCAN_BYTES_PER_FILE: u64 = 8 * 1024 * 1024;
 
 const RISK_CONFIG_MODULE_ID: &str = "internal.ksud.risk";
-const RISK_CONFIG_KEY: &str = "enabled";
+const RISK_CONFIG_KEY: &str = "risk.enabled";
+const LEGACY_RISK_CONFIG_KEY: &str = "enabled";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -54,18 +55,27 @@ fn parse_risk_catalog(json: &[u8]) -> Result<RiskCatalog, serde_json::Error> {
 
 pub fn should_update_risk_cache(local_json: &[u8], remote_json: &[u8]) -> bool {
     let Ok(local) = parse_risk_catalog(local_json) else {
-        return true;
+        // Local cache is unreadable; only accept a *valid* remote catalog.
+        return parse_risk_catalog(remote_json).is_ok();
     };
     let Ok(remote) = parse_risk_catalog(remote_json) else {
-        return true;
+        // Remote is unreadable (e.g. a hijacked response or error page);
+        // never let it replace a valid local cache.
+        return false;
     };
 
     local.hash != remote.hash
 }
 
 fn fetch_remote_risk_json() -> Option<Vec<u8>> {
+    // Wrap wget with the timeout applet so a blackholed/hijacked network
+    // path cannot stall module installation indefinitely.
+    let script = format!(
+        "timeout 15 '{}' wget -q -O - -- '{}'",
+        assets::BUSYBOX_PATH, REMOTE_RISK_URL
+    );
     let output = Command::new(assets::BUSYBOX_PATH)
-        .args(["wget", "-q", "-O", "-", "--", REMOTE_RISK_URL])
+        .args(["ash", "-c", &script])
         .output()
         .ok()?;
 
@@ -84,7 +94,9 @@ fn load_risk_json() -> Vec<u8> {
     }
 
     let local_bytes = std::fs::read(cache_path).ok();
-    let remote_bytes = fetch_remote_risk_json();
+    // A hijacked/captive-portal response must never poison the on-disk
+    // cache, so only accept remote bytes that parse as a valid catalog.
+    let remote_bytes = fetch_remote_risk_json().filter(|bytes| parse_risk_catalog(bytes).is_ok());
 
     match (local_bytes, remote_bytes) {
         (Some(local), Some(remote)) => {
@@ -261,11 +273,21 @@ fn normalize_risk_text(text: &str) -> String {
 }
 
 pub fn is_risk_detection_enabled() -> bool {
-    match crate::module_config::get_config_value(
+    let config_type = crate::module_config::ConfigType::Persist;
+    let configured = crate::module_config::get_config_value(
         RISK_CONFIG_MODULE_ID,
         RISK_CONFIG_KEY,
-        crate::module_config::ConfigType::Persist,
-    ) {
+        config_type,
+    );
+    let configured = match configured {
+        Ok(Some(value)) => Ok(Some(value)),
+        Ok(None) | Err(_) => crate::module_config::get_config_value(
+            RISK_CONFIG_MODULE_ID,
+            LEGACY_RISK_CONFIG_KEY,
+            config_type,
+        ),
+    };
+    match configured {
         Ok(Some(value)) => crate::module_config::parse_bool_config(&value),
         Ok(None) | Err(_) => true,
     }
@@ -310,6 +332,25 @@ mod tests {
 
         assert!(!should_update_risk_cache(local, remote_same));
         assert!(should_update_risk_cache(local, remote_diff));
+    }
+
+    #[test]
+    fn garbage_remote_never_replaces_cache() {
+        let local = br#"{"hash":"abc","rules":[{"reason":"demo","severity":"low","patterns":["alpha"]}]}"#;
+        let garbage = b"<html>302 Found - redirect to carrier portal</html>";
+
+        // Hijacked/garbage remote responses must not win over a valid local cache.
+        assert!(!should_update_risk_cache(local, garbage));
+    }
+
+    #[test]
+    fn valid_remote_can_replace_corrupted_local() {
+        let garbage = b"not json at all";
+        let remote = br#"{"hash":"abc","rules":[]}"#;
+
+        assert!(should_update_risk_cache(garbage, remote));
+        // Both corrupted: keep what we have rather than swapping garbage.
+        assert!(!should_update_risk_cache(garbage, garbage));
     }
 
     #[test]

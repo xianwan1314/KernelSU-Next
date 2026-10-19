@@ -32,7 +32,7 @@ jobs:
           - android15-6.6
           - android16-6.12
           - android17-6.18
-    uses: ./.github/workflows/ddk-lkm.yml
+    uses: ./.github/workflows/ddk-lkm-ksu.yml
     with:
       kmi: ${{ matrix.kmi }}
       vivo: true

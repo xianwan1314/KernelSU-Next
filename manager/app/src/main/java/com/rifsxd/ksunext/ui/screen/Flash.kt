@@ -450,8 +450,7 @@ sealed class FlashIt : Parcelable {
         val ota: Boolean,
         val bootImageKind: String? = null,
         val allowShell: Boolean = false,
-        val enableAdb: Boolean = false,
-        val blockModules: String = ""
+        val enableAdb: Boolean = false
     ) : FlashIt()
 
     data class FlashModules(val uris: List<Uri>) : FlashIt()
@@ -486,7 +485,6 @@ fun flashIt(
             flashIt.bootImageKind,
             flashIt.allowShell,
             flashIt.enableAdb,
-            flashIt.blockModules,
             onStdout,
             onStderr
         )
